@@ -47,11 +47,17 @@ func initConfig(nid, nnm, sid, snm uint64) *params.ChainConfig {
 func BuildSupervisor(nnm, snm uint64) {
 	methodID := params.ConsensusMethod
 	var measureMod []string
-	if methodID == 0 || methodID == 2 {
+	//methodID 4: Monoxide+Contract Handling, 5: UnionChain
+	if methodID == 0 || methodID == 2 || methodID == 5 {
 		measureMod = params.MeasureBrokerMod
 	} else {
 		measureMod = params.MeasureRelayMod
 	}
+
+	if methodID == 0 || methodID == 1 || methodID == 4 || methodID == 5 {
+		measureMod = append(measureMod, "CLPA")
+	}
+
 	measureMod = append(measureMod, "Tx_Details")
 
 	lsn := new(supervisor.Supervisor)

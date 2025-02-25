@@ -2,6 +2,7 @@ package message
 
 import (
 	"blockEmulator/core"
+	"blockEmulator/partition"
 	"blockEmulator/shard"
 	"time"
 )
@@ -25,6 +26,11 @@ const (
 
 	CBlockInfo MessageType = "BlockInfo"
 	CSeqIDinfo MessageType = "SequenceID"
+
+	// for smart contract
+	CContractInject  MessageType = "contractInject"
+	CContractRequest MessageType = "contractRequest"
+	CContactResponse MessageType = "contractResponse"
 )
 
 var (
@@ -86,6 +92,11 @@ type InjectTxs struct {
 	ToShardID uint64
 }
 
+type ContractInjectTxs struct {
+	Txs       []*core.Transaction
+	ToShardID uint64
+}
+
 // data sent to the supervisor
 type BlockInfoMsg struct {
 	BlockBodyLength int
@@ -103,6 +114,18 @@ type BlockInfoMsg struct {
 	// for broker
 	Broker1Txs []*core.Transaction // cross transactions at first time by broker
 	Broker2Txs []*core.Transaction // cross transactions at second time by broker
+
+	// for smart contract
+	CrossShardFunctionCall []*core.Transaction // cross shard function call transactions
+	InnerSCTxs             []*core.Transaction // inner shard smart contract transactions
+
+	// for CLPA
+	CLPAResult *partition.CLPAState
+}
+
+type ContractGraph struct {
+	Txs       []*core.Transaction
+	ToShardID uint64
 }
 
 type SeqIDinfo struct {

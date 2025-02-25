@@ -45,6 +45,19 @@ func (txpool *TxPool) AddTxs2Pool(txs []*Transaction) {
 	}
 }
 
+// Add a list of transactions to the front of the pool
+func (txpool *TxPool) AddTxs2Front(txs []*Transaction) {
+	txpool.lock.Lock()
+	defer txpool.lock.Unlock()
+	for _, tx := range txs {
+		if tx.Time.IsZero() {
+			tx.Time = time.Now()
+		}
+	}
+	// Prepend the transactions to the queue
+	txpool.TxQueue = append(txs, txpool.TxQueue...)
+}
+
 // add transactions into the pool head
 func (txpool *TxPool) AddTxs2Pool_Head(tx []*Transaction) {
 	txpool.lock.Lock()

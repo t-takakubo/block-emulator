@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"strconv"
+	"time"
 )
 
 // CLPA算法状态，state of constraint label propagation algorithm
@@ -24,6 +25,8 @@ type CLPAState struct {
 	CrossShardEdgeNum int            // 跨分片边的总数
 	ShardNum          int            // 分片数目
 	GraphHash         []byte
+	ExecutionTime     time.Duration
+	UnionFind         *UnionFind
 }
 
 func (graph *CLPAState) Hash() []byte {
@@ -67,6 +70,40 @@ func (cs *CLPAState) AddEdge(u, v Vertex) {
 	cs.NetGraph.AddEdge(u, v)
 	// 可以批处理完之后再修改 Edges2Shard 等参数
 	// 当然也可以不处理，因为 CLPA 算法运行前会更新最新的参数
+}
+
+// Called only when contract to contract
+func (cs *CLPAState) MergeContracts(u, v Vertex) Vertex {
+	rootU := cs.UnionFind.Find(u.Addr)
+	rootV := cs.UnionFind.Find(v.Addr)
+
+	if rootU == rootV {
+		return Vertex{}
+	}
+
+	parentAddr := cs.UnionFind.Union(rootU, rootV)
+
+	if parentAddr == rootU && rootU != rootV {
+		return Vertex{}
+	} else if parentAddr == rootV && rootU != rootV {
+		return Vertex{}
+	}
+
+	parentVertex := Vertex{Addr: parentAddr}
+
+	var vertexToDelete Vertex
+	if parentAddr == rootU {
+		vertexToDelete = v
+	} else if parentAddr == rootV {
+		vertexToDelete = u
+	} else {
+		log.Panic("Invalid parent address")
+	}
+
+	cs.NetGraph.UpdateGraphForPartialMerge(vertexToDelete, parentVertex)
+	delete(cs.PartitionMap, vertexToDelete)
+
+	return parentVertex
 }
 
 // 复制CLPA状态
@@ -174,6 +211,7 @@ func (cs *CLPAState) Init_CLPAState(wp float64, mIter, sn int) {
 	cs.ShardNum = sn
 	cs.VertexsNumInShard = make([]int, cs.ShardNum)
 	cs.PartitionMap = make(map[Vertex]int)
+	cs.UnionFind = NewUnionFind()
 }
 
 // 初始化划分，使用节点地址的尾数划分，应该保证初始化的时候不会出现空分片
@@ -233,6 +271,7 @@ func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 	fmt.Println("Before running CLPA, cross-shard edge number:", cs.CrossShardEdgeNum)
 	res := make(map[string]uint64)
 	updateTreshold := make(map[string]int)
+	startTime := time.Now()
 	for iter := 0; iter < cs.MaxIterations; iter += 1 { // 第一层循环控制算法次数，constraint
 		for v := range cs.NetGraph.VertexSet {
 			if updateTreshold[v.Addr] >= 50 {
@@ -267,6 +306,16 @@ func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 	for sid, n := range cs.VertexsNumInShard {
 		fmt.Printf("%d has vertexs: %d\n", sid, n)
 	}
+
+	for v := range cs.NetGraph.VertexSet {
+		if IsUnioned := cs.UnionFind.HasBeenUnioned(v.Addr); IsUnioned {
+			res[v.Addr] = uint64(cs.PartitionMap[v])
+		}
+	}
+
+	endTime := time.Now()
+	executionTime := endTime.Sub(startTime)
+	cs.ExecutionTime = executionTime
 
 	cs.ComputeEdges2Shard()
 	fmt.Println("After running CLPA, cross-shard edge number:", cs.CrossShardEdgeNum)

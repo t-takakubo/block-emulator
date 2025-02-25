@@ -61,6 +61,10 @@ func (d *Supervisor) NewSupervisor(ip string, pcc *params.ChainConfig, committee
 		d.comMod = committee.NewCLPACommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize, params.ReconfigTimeGap)
 	case "Broker":
 		d.comMod = committee.NewBrokerCommitteeMod(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize)
+	case "CLPA_Contract":
+		d.comMod = committee.NewCLPAContractCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.InternalTxFile, params.TotalDataSize, params.TxBatchSize, params.ReconfigTimeGap)
+	case "UnionChain":
+		d.comMod = committee.NewUnionChainCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.InternalTxFile, params.TotalDataSize, params.TxBatchSize, params.ReconfigTimeGap)
 	default:
 		d.comMod = committee.NewRelayCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize)
 	}
@@ -86,6 +90,8 @@ func (d *Supervisor) NewSupervisor(ip string, pcc *params.ChainConfig, committee
 			d.testMeasureMods = append(d.testMeasureMods, measure.NewTestTxNumCount_Broker())
 		case "Tx_Details":
 			d.testMeasureMods = append(d.testMeasureMods, measure.NewTestTxDetail())
+		case "CLPA":
+			d.testMeasureMods = append(d.testMeasureMods, measure.NewTestModule_CLPA())
 		default:
 		}
 	}

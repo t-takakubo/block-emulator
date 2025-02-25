@@ -3,6 +3,7 @@ package dataSupport
 import (
 	"blockEmulator/core"
 	"blockEmulator/message"
+	"blockEmulator/partition"
 	"sync"
 )
 
@@ -12,6 +13,7 @@ type Data_supportCLPA struct {
 	ReceivedNewAccountState map[string]*core.AccountState         // the new accountState From other Shards
 	ReceivedNewTx           []*core.Transaction                   // new transactions from other shards' pool
 	AccountStateTx          map[uint64]*message.AccountStateAndTx // the map of accountState and transactions, pool
+	AccountStateTxLock      sync.Mutex                            // lock for accountStateTx
 	PartitionOn             bool                                  // judge nextEpoch is partition or not
 
 	PartitionReady map[uint64]bool // judge whether all shards has done all txs
@@ -22,6 +24,9 @@ type Data_supportCLPA struct {
 
 	CollectOver bool       // judge whether all txs is collected or not
 	CollectLock sync.Mutex // lock for collect
+
+	MergedContracts         []map[string]partition.Vertex   // key: address, value: mergedVertex
+	ReversedMergedContracts []map[partition.Vertex][]string // key: mergedVertex, value: address
 }
 
 func NewCLPADataSupport() *Data_supportCLPA {
@@ -35,5 +40,7 @@ func NewCLPADataSupport() *Data_supportCLPA {
 		PartitionReady:          make(map[uint64]bool),
 		CollectOver:             false,
 		ReadySeq:                make(map[uint64]uint64),
+		MergedContracts:         make([]map[string]partition.Vertex, 0),
+		ReversedMergedContracts: make([]map[partition.Vertex][]string, 0),
 	}
 }

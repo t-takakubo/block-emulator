@@ -5,7 +5,9 @@ package chain
 
 import (
 	"blockEmulator/core"
+	"blockEmulator/erc20"
 	"blockEmulator/params"
+	"blockEmulator/partition"
 	"blockEmulator/storage"
 	"blockEmulator/utils"
 	"bytes"
@@ -24,14 +26,15 @@ import (
 )
 
 type BlockChain struct {
-	db           ethdb.Database      // the leveldb database to store in the disk, for status trie
-	triedb       *trie.Database      // the trie database which helps to store the status trie
-	ChainConfig  *params.ChainConfig // the chain configuration, which can help to identify the chain
-	CurrentBlock *core.Block         // the top block in this blockchain
-	Storage      *storage.Storage    // Storage is the bolt-db to store the blocks
-	Txpool       *core.TxPool        // the transaction pool
-	PartitionMap map[string]uint64   // the partition map which is defined by some algorithm can help account parition
-	pmlock       sync.RWMutex
+	db              ethdb.Database              // the leveldb database to store in the disk, for status trie
+	triedb          *trie.Database              // the trie database which helps to store the status trie
+	ChainConfig     *params.ChainConfig         // the chain configuration, which can help to identify the chain
+	CurrentBlock    *core.Block                 // the top block in this blockchain
+	Storage         *storage.Storage            // Storage is the bolt-db to store the blocks
+	Txpool          *core.TxPool                // the transaction pool
+	PartitionMap    map[string]uint64           // the partition map which is defined by some algorithm can help account parition
+	MergedContracts map[string]partition.Vertex // key: address, value: mergedVertex
+	pmlock          sync.RWMutex
 }
 
 // Get the transaction root, this root can be used to check the transactions
@@ -61,10 +64,21 @@ func (bc *BlockChain) Update_PartitionMap(key string, val uint64) {
 	bc.PartitionMap[key] = val
 }
 
+func (bc *BlockChain) Update_MergedContracts(key string, val partition.Vertex) {
+	bc.pmlock.Lock()
+	defer bc.pmlock.Unlock()
+	bc.MergedContracts[key] = val
+}
+
 // Get parition (if not exist, return default)
 func (bc *BlockChain) Get_PartitionMap(key string) uint64 {
 	bc.pmlock.RLock()
 	defer bc.pmlock.RUnlock()
+
+	if mergedVertex, ok := bc.MergedContracts[key]; ok {
+		key = mergedVertex.Addr
+	}
+
 	if _, ok := bc.PartitionMap[key]; !ok {
 		return uint64(utils.Addr2Shard(key))
 	}
@@ -91,72 +105,112 @@ func (bc *BlockChain) GetUpdateStatusTrie(txs []*core.Transaction) common.Hash {
 	cnt := 0
 	// handle transactions, the signature check is ignored here
 	for i, tx := range txs {
+		// for smart contract tx
+		if tx.HasContract {
+			for addr, account := range tx.StateChangeAccounts {
+				if account.IsContract {
+					// fmt.Printf("txhash: %x, sc addr: %s\n", tx.TxHash, addr)
+					state_enc, _ := st.Get([]byte(addr))
+					var state *core.AccountState
+					if state_enc == nil {
+						// fmt.Println("missing account SENDER, now adding account")
+						ib := new(big.Int)
+						ib.Add(ib, params.Init_Balance)
+						state = &core.AccountState{
+							Nonce:   uint64(i),
+							Balance: ib,
+							Storage: erc20.NewERC20Token("sampleToken", "STK"),
+						}
+					} else {
+						state = core.DecodeAS(state_enc)
+					}
+
+					if state.Storage == nil {
+						state.Storage = erc20.NewERC20Token("sampleToken", "STK")
+						err := state.Storage.Transfer("0", "1", new(big.Int).SetUint64(100))
+						if err != nil {
+							fmt.Println(err)
+						}
+					}
+					st.Update([]byte(addr), state.Encode())
+					cnt++
+				}
+			}
+		}
+
 		// fmt.Printf("tx %d: %s, %s\n", i, tx.Sender, tx.Recipient)
 		// senderIn := false
-		if !tx.Relayed && (bc.Get_PartitionMap(tx.Sender) == bc.ChainConfig.ShardID || tx.HasBroker) {
-			// senderIn = true
-			// fmt.Printf("the sender %s is in this shard %d, \n", tx.Sender, bc.ChainConfig.ShardID)
-			// modify local accountstate
-			s_state_enc, _ := st.Get([]byte(tx.Sender))
-			var s_state *core.AccountState
-			if s_state_enc == nil {
-				// fmt.Println("missing account SENDER, now adding account")
-				ib := new(big.Int)
-				ib.Add(ib, params.Init_Balance)
-				s_state = &core.AccountState{
-					Nonce:   uint64(i),
-					Balance: ib,
+		if !tx.HasContract {
+			if !tx.Relayed && (bc.Get_PartitionMap(tx.Sender) == bc.ChainConfig.ShardID || tx.HasBroker) {
+				// senderIn = true
+				// fmt.Printf("the sender %s is in this shard %d, \n", tx.Sender, bc.ChainConfig.ShardID)
+				// modify local accountstate
+				s_state_enc, _ := st.Get([]byte(tx.Sender))
+				var s_state *core.AccountState
+				if s_state_enc == nil {
+					// fmt.Println("missing account SENDER, now adding account")
+					ib := new(big.Int)
+					ib.Add(ib, params.Init_Balance)
+					s_state = &core.AccountState{
+						Nonce:   uint64(i),
+						Balance: ib,
+					}
+				} else {
+					s_state = core.DecodeAS(s_state_enc)
 				}
-			} else {
-				s_state = core.DecodeAS(s_state_enc)
-			}
-			s_balance := s_state.Balance
-			if s_balance.Cmp(tx.Value) == -1 {
-				fmt.Printf("the balance is less than the transfer amount\n")
-				continue
-			}
-			s_state.Deduct(tx.Value)
-			st.Update([]byte(tx.Sender), s_state.Encode())
-			cnt++
-		}
-		// recipientIn := false
-		if bc.Get_PartitionMap(tx.Recipient) == bc.ChainConfig.ShardID || tx.HasBroker {
-			// fmt.Printf("the recipient %s is in this shard %d, \n", tx.Recipient, bc.ChainConfig.ShardID)
-			// recipientIn = true
-			// modify local state
-			r_state_enc, _ := st.Get([]byte(tx.Recipient))
-			var r_state *core.AccountState
-			if r_state_enc == nil {
-				// fmt.Println("missing account RECIPIENT, now adding account")
-				ib := new(big.Int)
-				ib.Add(ib, params.Init_Balance)
-				r_state = &core.AccountState{
-					Nonce:   uint64(i),
-					Balance: ib,
+				s_balance := s_state.Balance
+				if s_balance.Cmp(tx.Value) == -1 {
+					fmt.Printf("the balance is less than the transfer amount\n")
+					continue
 				}
-			} else {
-				r_state = core.DecodeAS(r_state_enc)
+				s_state.Deduct(tx.Value)
+				st.Update([]byte(tx.Sender), s_state.Encode())
+				cnt++
 			}
-			r_state.Deposit(tx.Value)
-			st.Update([]byte(tx.Recipient), r_state.Encode())
-			cnt++
+			// recipientIn := false
+			if bc.Get_PartitionMap(tx.Recipient) == bc.ChainConfig.ShardID || tx.HasBroker {
+				// fmt.Printf("the recipient %s is in this shard %d, \n", tx.Recipient, bc.ChainConfig.ShardID)
+				// recipientIn = true
+				// modify local state
+				r_state_enc, _ := st.Get([]byte(tx.Recipient))
+				var r_state *core.AccountState
+				if r_state_enc == nil {
+					// fmt.Println("missing account RECIPIENT, now adding account")
+					ib := new(big.Int)
+					ib.Add(ib, params.Init_Balance)
+					r_state = &core.AccountState{
+						Nonce:   uint64(i),
+						Balance: ib,
+					}
+				} else {
+					r_state = core.DecodeAS(r_state_enc)
+				}
+				r_state.Deposit(tx.Value)
+				st.Update([]byte(tx.Recipient), r_state.Encode())
+				cnt++
+			}
 		}
+
 	}
 	// commit the memory trie to the database in the disk
 	if cnt == 0 {
 		return common.BytesToHash(bc.CurrentBlock.Header.StateRoot)
 	}
 	rt, ns := st.Commit(false)
-	// if `ns` is nil, the `err = bc.triedb.Update(trie.NewWithNodeSet(ns))` will report an error.
-	if ns != nil {
-		err = bc.triedb.Update(trie.NewWithNodeSet(ns))
-		if err != nil {
-			log.Panic()
+
+	if ns == nil {
+		for i, tx := range txs {
+			fmt.Printf("tx %d: sender %s shard %d, recipient %s shard %d\n", i, tx.Sender, bc.Get_PartitionMap(tx.Sender), tx.Recipient, bc.Get_PartitionMap(tx.Recipient))
 		}
-		err = bc.triedb.Commit(rt, false)
-		if err != nil {
-			log.Panic(err)
-		}
+		return common.BytesToHash(bc.CurrentBlock.Header.StateRoot)
+	}
+	err = bc.triedb.Update(trie.NewWithNodeSet(ns))
+	if err != nil {
+		log.Panic()
+	}
+	err = bc.triedb.Commit(rt, false)
+	if err != nil {
+		log.Panic(err)
 	}
 	fmt.Println("modified account number is ", cnt)
 	return rt
@@ -253,11 +307,12 @@ func NewBlockChain(cc *params.ChainConfig, db ethdb.Database) (*BlockChain, erro
 	fmt.Println("Generating a new blockchain", db)
 	chainDBfp := params.DatabaseWrite_path + fmt.Sprintf("chainDB/S%d_N%d", cc.ShardID, cc.NodeID)
 	bc := &BlockChain{
-		db:           db,
-		ChainConfig:  cc,
-		Txpool:       core.NewTxPool(),
-		Storage:      storage.NewStorage(chainDBfp, cc),
-		PartitionMap: make(map[string]uint64),
+		db:              db,
+		ChainConfig:     cc,
+		Txpool:          core.NewTxPool(),
+		Storage:         storage.NewStorage(chainDBfp, cc),
+		PartitionMap:    make(map[string]uint64),
+		MergedContracts: make(map[string]partition.Vertex),
 	}
 	curHash, err := bc.Storage.GetNewestBlockHash()
 	if err != nil {

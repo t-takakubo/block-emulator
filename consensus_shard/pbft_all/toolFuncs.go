@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -188,4 +189,18 @@ func DeleteElementsInList(list []*core.Transaction, elements []*core.Transaction
 		}
 	}
 	return list[:-removedCnt]
+}
+
+func ReverseMap[K comparable, V comparable](m map[K]V) map[V][]K {
+	reversedMap := make(map[V][]K)
+	for key, value := range m {
+		reversedMap[value] = append(reversedMap[value], key)
+	}
+	return reversedMap
+}
+
+// GenerateRandomString generates a random number as a string between 0 and max (inclusive).
+func GenerateRandomString(max int) string {
+	randomNumber := rand.Intn(max + 1) // Generate a random number between 0 and max (inclusive)
+	return strconv.Itoa(randomNumber)  // Convert the number to a string
 }

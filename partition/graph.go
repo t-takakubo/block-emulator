@@ -44,6 +44,56 @@ func (g *Graph) AddEdge(u, v Vertex) {
 	g.EdgeSet[v] = append(g.EdgeSet[v], u)
 }
 
+// Remove an edge from the graph
+func (g *Graph) RemoveEdge(u, v Vertex) {
+	// Remove v from u's adjacency list
+	if neighbors, ok := g.EdgeSet[u]; ok {
+		g.EdgeSet[u] = removeFromSlice(neighbors, v)
+	}
+
+	// Remove u from v's adjacency list (since it's an undirected graph)
+	if neighbors, ok := g.EdgeSet[v]; ok {
+		g.EdgeSet[v] = removeFromSlice(neighbors, u)
+	}
+}
+
+// Helper function to remove a vertex from a slice of vertices
+func removeFromSlice(slice []Vertex, vertex Vertex) []Vertex {
+	var newSlice []Vertex
+	for _, v := range slice {
+		if v != vertex {
+			newSlice = append(newSlice, v)
+		}
+	}
+	return newSlice
+}
+
+func (g *Graph) transferEdgesAndRemove(source, mergedVertex Vertex) {
+	if edges, exists := g.EdgeSet[source]; exists {
+		var edgesToRemove []Vertex // Store edges to be removed after the loop
+		for _, neighbor := range edges {
+			g.AddEdge(mergedVertex, neighbor)               // Add the edge to the target vertex
+			edgesToRemove = append(edgesToRemove, neighbor) // Mark for later removal
+		}
+
+		// Remove edges from the source vertex
+		for _, neighbor := range edgesToRemove {
+			g.RemoveEdge(source, neighbor)
+		}
+
+		// Remove the source vertex's edges
+		delete(g.EdgeSet, source)
+	}
+
+	// Remove the source vertex from the VertexSet
+	delete(g.VertexSet, source)
+}
+
+func (g *Graph) UpdateGraphForPartialMerge(u, mergedVertex Vertex) {
+	g.RemoveEdge(u, mergedVertex)
+	g.transferEdgesAndRemove(u, mergedVertex)
+}
+
 // 复制图
 func (dst *Graph) CopyGraph(src Graph) {
 	dst.VertexSet = make(map[Vertex]bool)

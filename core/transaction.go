@@ -31,6 +31,18 @@ type Transaction struct {
 	OriginalSender utils.Address
 	FinalRecipient utils.Address
 	RawTxHash      []byte
+
+	// for smart contract tx
+	HasContract          bool
+	InternalTxs          []*InternalTransaction
+	IsCrossShardFuncCall bool
+	IsAllInner           bool
+	IsDeleted            bool
+	IsExecuteCLPA        bool
+	StateChangeAccounts  map[utils.Address]*Account
+	RequestID            string
+	DivisionCount        int
+	MergeCount           int
 }
 
 func (tx *Transaction) PrintTx() string {
@@ -88,5 +100,6 @@ func NewTransaction(sender, recipient string, value *big.Int, nonce uint64, prop
 	tx.RawTxHash = nil
 	tx.HasBroker = false
 	tx.SenderIsBroker = false
+	tx.StateChangeAccounts = make(map[utils.Address]*Account)
 	return tx
 }

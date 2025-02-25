@@ -81,6 +81,8 @@ type PbftConsensusNode struct {
 
 	// to handle the message outside of pbft
 	ohm OpInterShards
+
+	IsStartCLPA bool
 }
 
 // generate a pbft consensus for a node
@@ -157,6 +159,43 @@ func NewPbftNode(shardID, nodeID uint64, pcc *params.ChainConfig, messageHandleT
 		}
 		p.ohm = &RawBrokerOutsideModule{
 			pbftNode: p,
+		}
+	case "CLPA_Contract":
+		ncdm := dataSupport.NewCLPADataSupport()
+		ncfcpm := dataSupport.NewCrossFunctionCallPoolManager()
+		p.ihm = &CLPAContractInsideExtraHandleMod{
+			pbftNode: p,
+			cdm:      ncdm,
+			cfcpm:    ncfcpm,
+		}
+		p.ohm = &CLPAContractOutsideModule{
+			pbftNode: p,
+			cdm:      ncdm,
+			cfcpm:    ncfcpm,
+		}
+
+		if ohmModule, ok := p.ohm.(*CLPAContractOutsideModule); ok {
+			if uint64(p.view.Load()) == p.NodeID {
+				go ohmModule.StartBatchProcessing(params.ContractBatchSize, time.Duration(params.ContractBatchProcessingIntervalMs)*time.Millisecond)
+			}
+		}
+	case "UnionChain":
+		ncdm := dataSupport.NewCLPADataSupport()
+		ncfcpm := dataSupport.NewCrossFunctionCallPoolManager()
+		p.ihm = &UnionChainPbftInsideExtraHandleMod{
+			pbftNode: p,
+			cdm:      ncdm,
+			cfcpm:    ncfcpm,
+		}
+		p.ohm = &UnionChainOutsideModule{
+			pbftNode: p,
+			cdm:      ncdm,
+			cfcpm:    ncfcpm,
+		}
+		if ohmModule, ok := p.ohm.(*UnionChainOutsideModule); ok {
+			if uint64(p.view.Load()) == p.NodeID {
+				go ohmModule.StartBatchProcessing(params.ContractBatchSize, time.Duration(params.ContractBatchProcessingIntervalMs)*time.Millisecond)
+			}
 		}
 	default:
 		p.ihm = &RawRelayPbftExtraHandleMod{

@@ -2,12 +2,15 @@ package message
 
 import (
 	"blockEmulator/core"
+	"blockEmulator/partition"
 	"bytes"
 	"encoding/gob"
 	"log"
+	"time"
 )
 
 var (
+	StartCLPA           MessageType = "StartCLPA"
 	AccountState_and_TX MessageType = "AccountState&txs"
 	PartitionReq        RequestType = "PartitionReq"
 	CPartitionMsg       MessageType = "PartitionModifiedMap"
@@ -16,13 +19,15 @@ var (
 
 type PartitionModifiedMap struct {
 	PartitionModified map[string]uint64
+	MergedContracts   map[string]partition.Vertex // key: address, value: mergedVertex
 }
 
 type AccountTransferMsg struct {
-	ModifiedMap  map[string]uint64
-	Addrs        []string
-	AccountState []*core.AccountState
-	ATid         uint64
+	ModifiedMap     map[string]uint64
+	MergedContracts map[string]partition.Vertex // key: address, value: mergedVertex
+	Addrs           []string
+	AccountState    []*core.AccountState
+	ATid            uint64
 }
 
 type PartitionReady struct {
@@ -35,7 +40,21 @@ type AccountStateAndTx struct {
 	Addrs        []string
 	AccountState []*core.AccountState
 	Txs          []*core.Transaction
+	Requests     []*CrossShardFunctionRequest
+	Responses    []*CrossShardFunctionResponse
 	FromShard    uint64
+}
+
+type CLPAResult struct {
+	EpochID           int
+	CrossShardEdgeNum int
+	VertexsNumInShard []int
+	VertexNum         int
+	TotalVertexNum    int
+	Edges2Shard       []int
+	MergedVertexNum   int
+	MergedContractNum int
+	ExecutionTime     time.Duration
 }
 
 func (atm *AccountTransferMsg) Encode() []byte {

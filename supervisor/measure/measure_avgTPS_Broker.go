@@ -3,6 +3,7 @@ package measure
 import (
 	"blockEmulator/message"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -14,8 +15,12 @@ type TestModule_avgTPS_Broker struct {
 	broker2TxNum []int // record how many broker2 txs in an epoch.
 	normalTxNum  []int // record how many normal txs in an epoch.
 
+	scTxInfo *SCTxResultInfo
+
 	startTime []time.Time // record when the epoch starts
 	endTime   []time.Time // record when the epoch ends
+
+	lock sync.Mutex
 }
 
 func NewTestModule_avgTPS_Broker() *TestModule_avgTPS_Broker {
@@ -24,6 +29,8 @@ func NewTestModule_avgTPS_Broker() *TestModule_avgTPS_Broker {
 		excutedTxNum: make([]float64, 0),
 		startTime:    make([]time.Time, 0),
 		endTime:      make([]time.Time, 0),
+
+		scTxInfo: NewSCTxResultInfo(),
 
 		broker1TxNum: make([]int, 0),
 		broker2TxNum: make([]int, 0),
@@ -40,6 +47,9 @@ func (tat *TestModule_avgTPS_Broker) UpdateMeasureRecord(b *message.BlockInfoMsg
 	if b.BlockBodyLength == 0 { // empty block
 		return
 	}
+
+	tat.lock.Lock()
+	defer tat.lock.Unlock()
 
 	epochid := b.Epoch
 	innerShardTxNum := len(b.InnerShardTxs)
@@ -76,6 +86,16 @@ func (tat *TestModule_avgTPS_Broker) UpdateMeasureRecord(b *message.BlockInfoMsg
 	if tat.endTime[epochid].IsZero() || latestTime.After(tat.endTime[epochid]) {
 		tat.endTime[epochid] = latestTime
 	}
+
+	for _, tx := range b.InnerSCTxs {
+		txHashStr := string(tx.TxHash)
+		tat.scTxInfo.UpdateSCTxInfo(txHashStr, false, true)
+	}
+
+	for _, tx := range b.CrossShardFunctionCall {
+		txHashStr := string(tx.TxHash)
+		tat.scTxInfo.UpdateSCTxInfo(txHashStr, true, false)
+	}
 }
 
 func (tat *TestModule_avgTPS_Broker) HandleExtraMessage([]byte) {}
@@ -101,26 +121,38 @@ func (tat *TestModule_avgTPS_Broker) OutputRecord() (perEpochTPS []float64, tota
 			lTime = tat.endTime[eid]
 		}
 	}
+
+	totalTxNum += float64(tat.scTxInfo.GetTotalSCTxNum())
 	totalTPS = totalTxNum / (lTime.Sub(eTime).Seconds())
+
 	return
 }
 
 func (tat *TestModule_avgTPS_Broker) writeToCSV() {
 	fileName := tat.OutputMetricName()
-	measureName := []string{"EpochID", "Total tx # in this epoch", "Normal tx # in this epoch", "Broker1 tx # in this epoch", "Broker2 tx # in this epoch", "Epoch start time", "Epoch end time", "Avg. TPS of this epoch"}
+	measureName := []string{
+		"EpochID",
+		"Total tx # in this epoch",
+		"Normal tx # in this epoch",
+		"Broker1 tx # in this epoch",
+		"Broker2 tx # in this epoch",
+		"Epoch start time",
+		"Epoch end time",
+		"Avg. TPS of this epoch",
+	}
 	measureVals := make([][]string, 0)
 
 	for eid, exTxNum := range tat.excutedTxNum {
 		timeGap := tat.endTime[eid].Sub(tat.startTime[eid]).Seconds()
 		csvLine := []string{
 			strconv.Itoa(eid),
-			strconv.FormatFloat(exTxNum, 'f', '8', 64),
+			strconv.FormatFloat(exTxNum, 'f', 8, 64),
 			strconv.Itoa(tat.normalTxNum[eid]),
 			strconv.Itoa(tat.broker1TxNum[eid]),
 			strconv.Itoa(tat.broker2TxNum[eid]),
 			strconv.FormatInt(tat.startTime[eid].UnixMilli(), 10),
 			strconv.FormatInt(tat.endTime[eid].UnixMilli(), 10),
-			strconv.FormatFloat(exTxNum/timeGap, 'f', '8', 64),
+			strconv.FormatFloat(exTxNum/timeGap, 'f', 8, 64),
 		}
 		measureVals = append(measureVals, csvLine)
 	}

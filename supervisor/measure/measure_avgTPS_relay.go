@@ -3,6 +3,7 @@ package measure
 import (
 	"blockEmulator/message"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -15,8 +16,12 @@ type TestModule_avgTPS_Relay struct {
 	relay1TxNum []int
 	relay2TxNum []int
 
+	scTxInfo *SCTxResultInfo
+
 	startTime []time.Time // record when the epoch starts
 	endTime   []time.Time // record when the epoch ends
+
+	lock sync.Mutex
 }
 
 func NewTestModule_avgTPS_Relay() *TestModule_avgTPS_Relay {
@@ -25,6 +30,8 @@ func NewTestModule_avgTPS_Relay() *TestModule_avgTPS_Relay {
 		excutedTxNum: make([]float64, 0),
 		startTime:    make([]time.Time, 0),
 		endTime:      make([]time.Time, 0),
+
+		scTxInfo: NewSCTxResultInfo(),
 
 		normalTxNum: make([]int, 0),
 		relay1TxNum: make([]int, 0),
@@ -41,6 +48,9 @@ func (tat *TestModule_avgTPS_Relay) UpdateMeasureRecord(b *message.BlockInfoMsg)
 	if b.BlockBodyLength == 0 { // empty block
 		return
 	}
+
+	tat.lock.Lock()
+	defer tat.lock.Unlock()
 
 	epochid := b.Epoch
 	earliestTime := b.ProposeTime
@@ -75,6 +85,16 @@ func (tat *TestModule_avgTPS_Relay) UpdateMeasureRecord(b *message.BlockInfoMsg)
 	if tat.endTime[epochid].IsZero() || latestTime.After(tat.endTime[epochid]) {
 		tat.endTime[epochid] = latestTime
 	}
+
+	for _, tx := range b.InnerSCTxs {
+		txHashStr := string(tx.TxHash)
+		tat.scTxInfo.UpdateSCTxInfo(txHashStr, false, true)
+	}
+
+	for _, tx := range b.CrossShardFunctionCall {
+		txHashStr := string(tx.TxHash)
+		tat.scTxInfo.UpdateSCTxInfo(txHashStr, true, false)
+	}
 }
 
 func (tat *TestModule_avgTPS_Relay) HandleExtraMessage([]byte) {}
@@ -88,6 +108,7 @@ func (tat *TestModule_avgTPS_Relay) OutputRecord() (perEpochTPS []float64, total
 	totalTxNum := 0.0
 	eTime := time.Now()
 	lTime := time.Time{}
+
 	for eid, exTxNum := range tat.excutedTxNum {
 		timeGap := tat.endTime[eid].Sub(tat.startTime[eid]).Seconds()
 		perEpochTPS[eid] = exTxNum / timeGap
@@ -99,26 +120,38 @@ func (tat *TestModule_avgTPS_Relay) OutputRecord() (perEpochTPS []float64, total
 			lTime = tat.endTime[eid]
 		}
 	}
+
 	totalTPS = totalTxNum / (lTime.Sub(eTime).Seconds())
+
 	return
 }
 
 func (tat *TestModule_avgTPS_Relay) writeToCSV() {
 	fileName := tat.OutputMetricName()
-	measureName := []string{"EpochID", "Total tx # in this epoch", "Normal tx # in this epoch", "Relay1 tx # in this epoch", "Relay2 tx # in this epoch", "Epoch start time", "Epoch end time", "Avg. TPS of this epoch"}
+	measureName := []string{
+		"EpochID",
+		"Total tx # in this epoch",
+		"Normal tx # in this epoch",
+		"Relay1 tx # in this epoch",
+		"Relay2 tx # in this epoch",
+		"Epoch start time",
+		"Epoch end time",
+		"Avg. TPS of this epoch",
+	}
 	measureVals := make([][]string, 0)
 
 	for eid, exTxNum := range tat.excutedTxNum {
 		timeGap := tat.endTime[eid].Sub(tat.startTime[eid]).Seconds()
+
 		csvLine := []string{
 			strconv.Itoa(eid),
-			strconv.FormatFloat(exTxNum, 'f', '8', 64),
+			strconv.FormatFloat(exTxNum, 'f', 8, 64),
 			strconv.Itoa(tat.normalTxNum[eid]),
 			strconv.Itoa(tat.relay1TxNum[eid]),
 			strconv.Itoa(tat.relay2TxNum[eid]),
 			strconv.FormatInt(tat.startTime[eid].UnixMilli(), 10),
 			strconv.FormatInt(tat.endTime[eid].UnixMilli(), 10),
-			strconv.FormatFloat(exTxNum/timeGap, 'f', '8', 64),
+			strconv.FormatFloat(exTxNum/timeGap, 'f', 8, 64),
 		}
 		measureVals = append(measureVals, csvLine)
 	}

@@ -3,6 +3,7 @@ package measure
 import (
 	"blockEmulator/message"
 	"strconv"
+	"sync"
 )
 
 // to test cross-transaction rate
@@ -13,8 +14,12 @@ type TestCrossTxRate_Relay struct {
 	relay1TxNum []int
 	relay2TxNum []int
 
+	scTxInfo *SCTxResultInfo
+
 	totTxNum      []float64
 	totCrossTxNum []float64
+
+	lock sync.Mutex
 }
 
 func NewTestCrossTxRate_Relay() *TestCrossTxRate_Relay {
@@ -26,6 +31,8 @@ func NewTestCrossTxRate_Relay() *TestCrossTxRate_Relay {
 		normalTxNum: make([]int, 0),
 		relay1TxNum: make([]int, 0),
 		relay2TxNum: make([]int, 0),
+
+		scTxInfo: NewSCTxResultInfo(),
 	}
 }
 
@@ -37,6 +44,9 @@ func (tctr *TestCrossTxRate_Relay) UpdateMeasureRecord(b *message.BlockInfoMsg) 
 	if b.BlockBodyLength == 0 { // empty block
 		return
 	}
+
+	tctr.lock.Lock()
+	defer tctr.lock.Unlock()
 
 	epochid := b.Epoch
 	r1TxNum := len(b.Relay1Txs)
@@ -60,6 +70,16 @@ func (tctr *TestCrossTxRate_Relay) UpdateMeasureRecord(b *message.BlockInfoMsg) 
 
 	tctr.totCrossTxNum[epochid] += float64(r1TxNum+r2TxNum) / 2
 	tctr.totTxNum[epochid] += float64(r1TxNum+r2TxNum)/2 + float64(len(b.InnerShardTxs))
+
+	for _, tx := range b.InnerSCTxs {
+		txHashStr := string(tx.TxHash)
+		tctr.scTxInfo.UpdateSCTxInfo(txHashStr, false, true)
+	}
+
+	for _, tx := range b.CrossShardFunctionCall {
+		txHashStr := string(tx.TxHash)
+		tctr.scTxInfo.UpdateSCTxInfo(txHashStr, true, false)
+	}
 }
 
 func (tctr *TestCrossTxRate_Relay) HandleExtraMessage([]byte) {}
@@ -71,31 +91,41 @@ func (tctr *TestCrossTxRate_Relay) OutputRecord() (perEpochCTXratio []float64, t
 	perEpochCTXratio = make([]float64, 0)
 	allEpoch_totTxNum := 0.0
 	allEpoch_ctxNum := 0.0
+
 	for eid, totTxN := range tctr.totTxNum {
 		perEpochCTXratio = append(perEpochCTXratio, tctr.totCrossTxNum[eid]/totTxN)
 		allEpoch_totTxNum += totTxN
 		allEpoch_ctxNum += tctr.totCrossTxNum[eid]
 	}
-	perEpochCTXratio = append(perEpochCTXratio, allEpoch_totTxNum)
-	perEpochCTXratio = append(perEpochCTXratio, allEpoch_ctxNum)
+
+	allEpoch_ctxNum += float64(tctr.scTxInfo.GetCrossShardSCTxNum())
+	allEpoch_totTxNum += float64(tctr.scTxInfo.GetTotalSCTxNum())
 
 	return perEpochCTXratio, allEpoch_ctxNum / allEpoch_totTxNum
 }
 
 func (tctr *TestCrossTxRate_Relay) writeToCSV() {
 	fileName := tctr.OutputMetricName()
-	measureName := []string{"EpochID", "Total tx # in this epoch", "CTX # in this epoch", "Normal tx # in this epoch", "Relay1 tx # in this epoch", "Relay2 tx # in this epoch", "CTX ratio of this epoch"}
+	measureName := []string{
+		"EpochID",
+		"Total tx # in this epoch",
+		"CTX # in this epoch",
+		"Normal tx # in this epoch",
+		"Relay1 tx # in this epoch",
+		"Relay2 tx # in this epoch",
+		"CTX ratio of this epoch",
+	}
 	measureVals := make([][]string, 0)
 
 	for eid, totTxInE := range tctr.totTxNum {
 		csvLine := []string{
 			strconv.Itoa(eid),
-			strconv.FormatFloat(totTxInE, 'f', '8', 64),
-			strconv.FormatFloat(tctr.totCrossTxNum[eid], 'f', '8', 64),
+			strconv.FormatFloat(totTxInE, 'f', 4, 64),
+			strconv.FormatFloat(tctr.totCrossTxNum[eid], 'f', 4, 64),
 			strconv.Itoa(tctr.normalTxNum[eid]),
 			strconv.Itoa(tctr.relay1TxNum[eid]),
 			strconv.Itoa(tctr.relay2TxNum[eid]),
-			strconv.FormatFloat(tctr.totCrossTxNum[eid]/totTxInE, 'f', '8', 64),
+			strconv.FormatFloat(tctr.totCrossTxNum[eid]/totTxInE, 'f', 4, 64),
 		}
 		measureVals = append(measureVals, csvLine)
 	}

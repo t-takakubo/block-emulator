@@ -2,8 +2,10 @@ package measure
 
 import (
 	"blockEmulator/message"
+	"blockEmulator/params"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -17,12 +19,17 @@ type TestModule_TCL_Broker struct {
 	ctxCommitLatency      []int64
 	normalTxCommitLatency []int64
 
+	crossShardFunctionCallLatency map[string]float64
+	innerSCTxCommitLatency        map[string]float64
+
 	normalTxNum  []int
 	broker1TxNum []int
 	broker2TxNum []int
 	txNum        []float64 // record the txNumber in each epoch
 
 	brokerTxMap map[string]time.Time // map: origin raw tx' hash to the time when the corresponding broker1 tx was added into the pool.
+
+	lock sync.Mutex
 }
 
 func NewTestModule_TCL_Broker() *TestModule_TCL_Broker {
@@ -33,6 +40,9 @@ func NewTestModule_TCL_Broker() *TestModule_TCL_Broker {
 		broker2CommitLatency:  make([]int64, 0),
 		ctxCommitLatency:      make([]int64, 0),
 		normalTxCommitLatency: make([]int64, 0),
+
+		crossShardFunctionCallLatency: make(map[string]float64),
+		innerSCTxCommitLatency:        make(map[string]float64),
 
 		txNum:        make([]float64, 0),
 		normalTxNum:  make([]int, 0),
@@ -52,7 +62,11 @@ func (tml *TestModule_TCL_Broker) UpdateMeasureRecord(b *message.BlockInfoMsg) {
 		return
 	}
 
+	tml.lock.Lock()
+	defer tml.lock.Unlock()
+
 	epochid := b.Epoch
+	mTime := b.CommitTime
 
 	// extend
 	for tml.epochID < epochid {
@@ -78,22 +92,44 @@ func (tml *TestModule_TCL_Broker) UpdateMeasureRecord(b *message.BlockInfoMsg) {
 
 	// normal txs
 	for _, tx := range b.InnerShardTxs {
-		tml.totTxLatencyEpoch[epochid] += b.CommitTime.Sub(tx.Time).Seconds()
-		tml.normalTxCommitLatency[epochid] += int64(b.CommitTime.Sub(tx.Time).Milliseconds())
+		tml.totTxLatencyEpoch[epochid] += mTime.Sub(tx.Time).Seconds()
+		tml.normalTxCommitLatency[epochid] += int64(mTime.Sub(tx.Time).Milliseconds())
 	}
 	// broker
 	for _, b1tx := range b.Broker1Txs {
 		tml.brokerTxMap[string(b1tx.RawTxHash)] = b1tx.Time
-		tml.broker1CommitLatency[epochid] += int64(b.CommitTime.Sub(b1tx.Time).Milliseconds())
+		tml.broker1CommitLatency[epochid] += int64(mTime.Sub(b1tx.Time).Milliseconds())
 	}
 	for _, b2tx := range b.Broker2Txs {
 		if b1txProposeTime, ok := tml.brokerTxMap[string(b2tx.RawTxHash)]; ok {
-			tml.totTxLatencyEpoch[epochid] += b.CommitTime.Sub(b1txProposeTime).Seconds()
-			tml.ctxCommitLatency[epochid] += b.CommitTime.Sub(b1txProposeTime).Milliseconds()
+			tml.totTxLatencyEpoch[epochid] += mTime.Sub(b1txProposeTime).Seconds()
+			tml.ctxCommitLatency[epochid] += mTime.Sub(b1txProposeTime).Milliseconds()
 		} else {
 			fmt.Println("Missing a broker1 tx. ")
 		}
-		tml.broker2CommitLatency[epochid] += int64(b.CommitTime.Sub(b2tx.Time).Milliseconds())
+		tml.broker2CommitLatency[epochid] += int64(mTime.Sub(b2tx.Time).Milliseconds())
+	}
+
+	// cross shard function call tx
+	for _, cftx := range b.CrossShardFunctionCall {
+		txHashStr := string(cftx.TxHash)
+		// Update the latest commit time
+		if existingLatency, exists := tml.crossShardFunctionCallLatency[txHashStr]; !exists {
+			tml.crossShardFunctionCallLatency[txHashStr] = mTime.Sub(cftx.Time).Seconds()
+		} else if existingLatency < mTime.Sub(cftx.Time).Seconds() {
+			tml.crossShardFunctionCallLatency[txHashStr] = mTime.Sub(cftx.Time).Seconds()
+		}
+	}
+
+	// inner shard contract tx
+	for _, sctx := range b.InnerSCTxs {
+		txHashStr := string(sctx.TxHash)
+		// Update the latest commit time
+		if existingLatency, exists := tml.innerSCTxCommitLatency[txHashStr]; !exists {
+			tml.innerSCTxCommitLatency[txHashStr] = mTime.Sub(sctx.Time).Seconds()
+		} else if existingLatency < mTime.Sub(sctx.Time).Seconds() {
+			tml.innerSCTxCommitLatency[txHashStr] = mTime.Sub(sctx.Time).Seconds()
+		}
 	}
 }
 
@@ -112,13 +148,23 @@ func (tml *TestModule_TCL_Broker) OutputRecord() (perEpochLatency []float64, tot
 		latencySum += totLatency
 		totTxNum += tml.txNum[eid]
 	}
-	totLatency = latencySum / totTxNum
+
+	for _, lat := range tml.crossShardFunctionCallLatency {
+		latencySum += float64(lat)
+	}
+
+	for _, lat := range tml.innerSCTxCommitLatency {
+		latencySum += float64(lat)
+	}
+
+	totLatency = latencySum / float64(params.TotalDataSize)
 	return
 }
 
 func (tml *TestModule_TCL_Broker) writeToCSV() {
 	fileName := tml.OutputMetricName()
-	measureName := []string{"EpochID",
+	measureName := []string{
+		"EpochID",
 		"Total tx # in this epoch",
 		"Normal tx # in this epoch",
 		"Broker1 tx # in this epoch",
@@ -127,13 +173,14 @@ func (tml *TestModule_TCL_Broker) writeToCSV() {
 		"Sum of Broker2 TCL (ms) (Duration: Broker2 Tx Propose -> Broker2 Tx Commit)",
 		"Sum of innerShardTx TCL (ms)",
 		"Sum of CTX TCL (ms) (Duration: Broker1 Tx Propose -> Broker2 Tx Commit)",
-		"Sum of All Tx TCL (sec.)"}
+		"Sum of All Tx TCL (sec.)",
+	}
 
 	measureVals := make([][]string, 0)
 	for eid, totTxInE := range tml.txNum {
 		csvLine := []string{
 			strconv.Itoa(eid),
-			strconv.FormatFloat(totTxInE, 'f', '8', 64),
+			strconv.FormatFloat(totTxInE, 'f', 8, 64),
 			strconv.Itoa(tml.normalTxNum[eid]),
 			strconv.Itoa(tml.broker1TxNum[eid]),
 			strconv.Itoa(tml.broker2TxNum[eid]),
@@ -141,7 +188,7 @@ func (tml *TestModule_TCL_Broker) writeToCSV() {
 			strconv.FormatInt(tml.broker2CommitLatency[eid], 10),
 			strconv.FormatInt(tml.normalTxCommitLatency[eid], 10),
 			strconv.FormatInt(tml.ctxCommitLatency[eid], 10),
-			strconv.FormatFloat(tml.totTxLatencyEpoch[eid], 'f', '8', 64),
+			strconv.FormatFloat(tml.totTxLatencyEpoch[eid], 'f', 8, 64),
 		}
 		measureVals = append(measureVals, csvLine)
 	}

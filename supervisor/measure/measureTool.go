@@ -47,3 +47,11 @@ func WriteMetricsToCSV(fileName string, colName []string, colVals [][]string) {
 		writer.Flush()
 	}
 }
+
+func sum(numbers []int) int {
+	sum := 0
+	for _, number := range numbers {
+		sum += number
+	}
+	return sum
+}

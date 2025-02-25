@@ -16,7 +16,7 @@ var (
 
 // consensus layer & output file path
 var (
-	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 4), representing [CLPA_Broker, CLPA, Broker, Relay]"
+	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 6), representing [CLPA_Broker, CLPA, Broker, Relay, CLPA_Contract, UnionChain]"
 
 	PbftViewChangeTimeOut = 10000 // The view change threshold of pbft. If the process of PBFT is too slow, the view change mechanism will be triggered.
 
@@ -38,10 +38,22 @@ var (
 	LogWrite_path      = ExpDataRootDir + "/log"       // Log output path
 	DatabaseWrite_path = ExpDataRootDir + "/database/" // database write path
 
-	SupervisorAddr = "127.0.0.1:18800"        // Supervisor ip address
-	DatasetFile    = `./selectedTxs_300K.csv` // The raw BlockTransaction data path
+	SupervisorAddr = "127.0.0.1:18800"       // Supervisor ip address
+	DatasetFile    = `./selectedTxs_90K.csv` // The raw BlockTransaction data path
 
-	ReconfigTimeGap = 50 // The time gap between epochs. This variable is only used in CLPA / CLPA_Broker now.
+	ReconfigTimeGap  = 50  // The time gap between epochs. This variable is only used in CLPA / CLPA_Broker now.
+	CLPAIterationNum = 100 // The number of iterations in CLPA / CLPA_Broker
+
+	//for UnionChain
+	InternalTxFile = `./selectedInternalTxs.csv` // The internal transaction data path
+	MaxUnion       = 15                          // threshold for group size
+	IsMerge        = 1                           // 1: merge, 0: not merge
+
+	AccountNumInContract              = 10000000
+	ContractBatchProcessingIntervalMs = 1000
+	ContractBatchSize                 = 2500
+	IsSkipLongInternalTx              = 0  // 1: skip long internal tx, 0: not skip long internal tx
+	SkipThresholdInternalTx           = 10 // The threshold of skipping long internal tx
 )
 
 // network layer
@@ -73,10 +85,22 @@ type globalConfig struct {
 	RelayWithMerkleProof int    `json:"RelayWithMerkleProof"`
 	DatasetFile          string `json:"DatasetFile"`
 	ReconfigTimeGap      int    `json:"ReconfigTimeGap"`
+	CLPAIterationNum     int    `json:"CLPAIterationNum"`
 
 	Delay       int `json:"Delay"`
 	JitterRange int `json:"JitterRange"`
 	Bandwidth   int `json:"Bandwidth"`
+
+	//for UnionChain
+	InternalTxFile string `json:"InternalTxFile"` // The internal transaction data path
+	MaxUnion       int    `json:"MaxUnion"`
+	IsMerge        int    `json:"IsMerge"`
+
+	AccountNumInContract              int `json:"AccountNumInContract"`
+	ContractBatchProcessingIntervalMs int `json:"ContractBatchProcessingIntervalMs"`
+	ContractBatchSize                 int `json:"ContractBatchSize"`
+	IsSkipLongInternalTx              int `json:"IsSkipLongInternalTx"`
+	SkipThresholdInternalTx           int `json:"SkipThresholdInternalTx"`
 }
 
 func ReadConfigFile() {
@@ -121,9 +145,18 @@ func ReadConfigFile() {
 	DatasetFile = config.DatasetFile
 
 	ReconfigTimeGap = config.ReconfigTimeGap
+	CLPAIterationNum = config.CLPAIterationNum
 
 	// network params
 	Delay = config.Delay
 	JitterRange = config.JitterRange
 	Bandwidth = config.Bandwidth
+
+	//for UnionChain
+	InternalTxFile = config.InternalTxFile
+	MaxUnion = config.MaxUnion
+	IsMerge = config.IsMerge
+
+	IsSkipLongInternalTx = config.IsSkipLongInternalTx
+	SkipThresholdInternalTx = config.SkipThresholdInternalTx
 }

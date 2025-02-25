@@ -30,19 +30,22 @@ var fileUpToDataSet = make(map[string]struct{})
 
 func attachLineToFile(filePath string, line string) error {
 	if _, exist := fileUpToDataSet[filePath]; !exist {
-		if delErr := os.Remove(filePath); delErr != nil {
-			log.Panic(delErr)
+		if _, err := os.Stat(filePath); err == nil {
+			if delErr := os.Remove(filePath); delErr != nil {
+				log.Printf("Failed to remove file %s: %v", filePath, delErr)
+			}
+		} else if !os.IsNotExist(err) {
+			log.Printf("Error checking file existence %s: %v", filePath, err)
 		}
 		fileUpToDataSet[filePath] = struct{}{}
 	}
-	// 以追加模式打开文件，如果文件不存在则创建
+
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-	defer file.Close() // 确保函数结束时关闭文件
+	defer file.Close()
 
-	// 写入文件的内容，附加一个换行符
 	if _, err := file.WriteString(line + "\n"); err != nil {
 		return err
 	}

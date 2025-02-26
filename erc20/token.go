@@ -1,10 +1,14 @@
 package erc20
 
 import (
-	"blockEmulator/params"
+	"bytes"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
+
+	"blockEmulator/params"
 )
 
 type ERC20Token struct {
@@ -27,6 +31,132 @@ func NewERC20Token(name string, symbol string) *ERC20Token {
 	// Initially assign all tokens to the creator
 	token.GenerateFixedAccounts(100, params.Init_Balance)
 	return token
+}
+
+func (t *ERC20Token) GobEncode() ([]byte, error) {
+	var buff bytes.Buffer
+	encoder := gob.NewEncoder(&buff)
+
+	if err := encoder.Encode(t.Name); err != nil {
+		return nil, err
+	}
+	if err := encoder.Encode(t.Symbol); err != nil {
+		return nil, err
+	}
+	if err := encoder.Encode(t.Decimals); err != nil {
+		return nil, err
+	}
+
+	var balanceKeys []string
+	for k := range t.Balances {
+		balanceKeys = append(balanceKeys, k)
+	}
+	sort.Strings(balanceKeys)
+	if err := encoder.Encode(len(balanceKeys)); err != nil {
+		return nil, err
+	}
+	for _, k := range balanceKeys {
+		if err := encoder.Encode(k); err != nil {
+			return nil, err
+		}
+		if err := encoder.Encode(t.Balances[k]); err != nil {
+			return nil, err
+		}
+	}
+
+	var allowanceKeys []string
+	for k := range t.Allowances {
+		allowanceKeys = append(allowanceKeys, k)
+	}
+	sort.Strings(allowanceKeys)
+	if err := encoder.Encode(len(allowanceKeys)); err != nil {
+		return nil, err
+	}
+	for _, k := range allowanceKeys {
+		if err := encoder.Encode(k); err != nil {
+			return nil, err
+		}
+		innerMap := t.Allowances[k]
+		var innerKeys []string
+		for ik := range innerMap {
+			innerKeys = append(innerKeys, ik)
+		}
+		sort.Strings(innerKeys)
+		if err := encoder.Encode(len(innerKeys)); err != nil {
+			return nil, err
+		}
+		for _, ik := range innerKeys {
+			if err := encoder.Encode(ik); err != nil {
+				return nil, err
+			}
+			if err := encoder.Encode(innerMap[ik]); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return buff.Bytes(), nil
+}
+
+func (t *ERC20Token) GobDecode(data []byte) error {
+	buff := bytes.NewBuffer(data)
+	decoder := gob.NewDecoder(buff)
+
+	if err := decoder.Decode(&t.Name); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&t.Symbol); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&t.Decimals); err != nil {
+		return err
+	}
+
+	var balanceLen int
+	if err := decoder.Decode(&balanceLen); err != nil {
+		return err
+	}
+	t.Balances = make(map[string]*big.Int)
+	for i := 0; i < balanceLen; i++ {
+		var key string
+		if err := decoder.Decode(&key); err != nil {
+			return err
+		}
+		var value big.Int
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		t.Balances[key] = new(big.Int).Set(&value)
+	}
+
+	var allowanceLen int
+	if err := decoder.Decode(&allowanceLen); err != nil {
+		return err
+	}
+	t.Allowances = make(map[string]map[string]*big.Int)
+	for i := 0; i < allowanceLen; i++ {
+		var key string
+		if err := decoder.Decode(&key); err != nil {
+			return err
+		}
+		var innerLen int
+		if err := decoder.Decode(&innerLen); err != nil {
+			return err
+		}
+		innerMap := make(map[string]*big.Int)
+		for j := 0; j < innerLen; j++ {
+			var innerKey string
+			if err := decoder.Decode(&innerKey); err != nil {
+				return err
+			}
+			var value big.Int
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+			innerMap[innerKey] = new(big.Int).Set(&value)
+		}
+		t.Allowances[key] = innerMap
+	}
+	return nil
 }
 
 // Transfer transfers tokens from sender to recipient.
@@ -61,9 +191,8 @@ func (t *ERC20Token) Deduct(account string, amount *big.Int) error {
 
 // GetBalance retrieves the balance of a specific account.
 func (t *ERC20Token) GetBalance(account string) *big.Int {
-	// Return 0 if the account does not exist
 	if balance, exists := t.Balances[account]; exists {
-		return new(big.Int).Set(balance) // Return a copy to avoid external mutation
+		return new(big.Int).Set(balance)
 	}
 	return big.NewInt(0)
 }
@@ -71,10 +200,7 @@ func (t *ERC20Token) GetBalance(account string) *big.Int {
 // GenerateFixedAccounts creates accounts with fixed balances.
 func (t *ERC20Token) GenerateFixedAccounts(numAccounts int, initialBalance *big.Int) {
 	for i := 0; i < numAccounts; i++ {
-		// Generate an address as a string
 		address := fmt.Sprintf("%d", i)
-
-		// Assign the fixed initial balance
 		t.Balances[address] = new(big.Int).Set(initialBalance)
 	}
 }

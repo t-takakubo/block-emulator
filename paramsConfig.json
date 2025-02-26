@@ -1,5 +1,5 @@
 {
-  "ConsensusMethod": 4,
+  "ConsensusMethod": 0,
 
   "PbftViewChangeTimeOut": 99999999999,
 
